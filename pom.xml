@@ -20,19 +20,12 @@ limitations under the License.
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <parent>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-parent</artifactId>
-    <version>3.3.5</version>
-    <relativePath/>
-  </parent>
-
   <groupId>com.google.cloud</groupId>
   <artifactId>appengine-java-mcp</artifactId>
   <version>1.0.0-SNAPSHOT</version>
   <packaging>war</packaging>
   <name>App Engine Java MCP Server</name>
-  <description>MCP server for Google App Engine, mirroring cloud-run-mcp for App Engine standard Java 25</description>
+  <description>Pure Jakarta EE 10 MCP server for Google App Engine Java 25</description>
 
   <properties>
     <java.version>25</java.version>
@@ -43,6 +36,9 @@ limitations under the License.
     <appengine.plugin.version>2.7.0</appengine.plugin.version>
     <appengine.sdk.version>2.0.28</appengine.sdk.version>
     <google.cloud.bom.version>26.53.0</google.cloud.bom.version>
+    <jakarta.servlet.version>6.0.0</jakarta.servlet.version>
+    <slf4j.version>2.0.12</slf4j.version>
+    <jackson.version>2.17.0</jackson.version>
   </properties>
 
   <dependencyManagement>
@@ -59,39 +55,31 @@ limitations under the License.
 
   <dependencies>
 
-    <!-- ===== Web / Servlet ===== -->
-    <!-- Spring Boot Web with Jetty (exclude embedded Tomcat) -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
-      <exclusions>
-        <exclusion>
-          <groupId>org.springframework.boot</groupId>
-          <artifactId>spring-boot-starter-tomcat</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <!-- Embedded Jetty (used locally; App Engine runtime provides its own Jetty) -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-jetty</artifactId>
-    </dependency>
-    <!-- Servlet API (provided by the container at runtime) -->
+    <!-- ===== Jakarta EE 10 ===== -->
     <dependency>
       <groupId>jakarta.servlet</groupId>
       <artifactId>jakarta.servlet-api</artifactId>
+      <version>${jakarta.servlet.version}</version>
       <scope>provided</scope>
     </dependency>
 
+    <!-- ===== Logging ===== -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+
     <!-- ===== App Engine Legacy APIs ===== -->
-    <!-- Enables DataStore, Memcache, TaskQueue, URLFetch etc. when
-         <app-engine-apis>true</app-engine-apis> is set in appengine-web.xml -->
     <dependency>
       <groupId>com.google.appengine</groupId>
       <artifactId>appengine-api-1.0-sdk</artifactId>
       <version>${appengine.sdk.version}</version>
-      <!-- 'provided' because the runtime ships the real implementation;
-           keeping compile scope so IDE/tests can resolve the classes. -->
       <scope>compile</scope>
     </dependency>
 
@@ -116,7 +104,6 @@ limitations under the License.
       <groupId>com.google.cloud</groupId>
       <artifactId>google-cloud-storage</artifactId>
     </dependency>
-    <!-- Service Usage API – used to enable APIs before deployment -->
     <dependency>
       <groupId>com.google.cloud</groupId>
       <artifactId>google-cloud-service-usage</artifactId>
@@ -126,7 +113,6 @@ limitations under the License.
       <groupId>com.google.auth</groupId>
       <artifactId>google-auth-library-oauth2-http</artifactId>
     </dependency>
-    <!-- Google API Client – used by OAuthInterceptor for token verification -->
     <dependency>
       <groupId>com.google.api-client</groupId>
       <artifactId>google-api-client</artifactId>
@@ -136,9 +122,10 @@ limitations under the License.
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
     </dependency>
 
-    <!-- ===== Env vars (.env support for local dev) ===== -->
+    <!-- ===== Env vars ===== -->
     <dependency>
       <groupId>io.github.cdimascio</groupId>
       <artifactId>dotenv-java</artifactId>
@@ -154,11 +141,11 @@ limitations under the License.
 
     <!-- ===== Testing ===== -->
     <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-test</artifactId>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
       <scope>test</scope>
     </dependency>
-    <!-- App Engine local test environment -->
     <dependency>
       <groupId>com.google.appengine</groupId>
       <artifactId>appengine-testing</artifactId>
@@ -176,51 +163,33 @@ limitations under the License.
 
   <build>
     <plugins>
-
-      <!-- Spring Boot plugin: builds executable JAR and supports WAR repackaging -->
       <plugin>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-maven-plugin</artifactId>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
         <configuration>
-          <!-- Skip repackaging for the WAR — App Engine deploys the plain WAR -->
-          <skip>false</skip>
+          <release>25</release>
         </configuration>
       </plugin>
 
-      <!-- WAR plugin -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-war-plugin</artifactId>
+        <version>3.4.0</version>
         <configuration>
           <failOnMissingWebXml>true</failOnMissingWebXml>
-          <!-- Exclude the embedded Jetty server-side jars from the WAR's WEB-INF/lib
-               when deploying to App Engine (which provides its own Jetty runtime). -->
-          <packagingExcludes>WEB-INF/lib/jetty-*.jar,WEB-INF/lib/jakarta.websocket-*.jar</packagingExcludes>
         </configuration>
       </plugin>
 
-      <!-- App Engine Maven Plugin -->
       <plugin>
         <groupId>com.google.cloud.tools</groupId>
         <artifactId>appengine-maven-plugin</artifactId>
         <version>${appengine.plugin.version}</version>
         <configuration>
-          <!-- mvn appengine:run  → local dev server on port 8080 -->
-          <!-- mvn appengine:deploy → deploy to App Engine standard -->
           <deploy.stopPreviousVersion>true</deploy.stopPreviousVersion>
           <deploy.promote>true</deploy.promote>
         </configuration>
       </plugin>
-
-      <!-- Surefire: run JUnit 5 tests -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <configuration>
-          <useModulePath>false</useModulePath>
-        </configuration>
-      </plugin>
-
     </plugins>
   </build>
 

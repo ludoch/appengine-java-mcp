@@ -15,26 +15,24 @@ limitations under the License.
 */
 package com.google.cloud.appengine.mcp;
 
-import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
-import com.google.cloud.appengine.mcp.tools.AppEngineMcpTools;
 import io.github.cdimascio.dotenv.Dotenv;
 import io.github.cdimascio.dotenv.DotenvException;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.web.servlet.ServletRegistrationBean;
-import org.springframework.boot.web.servlet.support.SpringBootServletInitializer;
-import org.springframework.context.annotation.Bean;
+import jakarta.servlet.ServletContextEvent;
+import jakarta.servlet.ServletContextListener;
+import jakarta.servlet.annotation.WebListener;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 /**
- * Main entry point for the App Engine Java MCP Server.
+ * Entry point for the Jakarta EE 10 MCP Server.
+ * Initialises the MCP server and tools on startup.
  */
-@SpringBootApplication
-public class AppEngineMcpApplication extends SpringBootServletInitializer {
+@WebListener
+public class AppEngineMcpApplication implements ServletContextListener {
 
   public static void main(String[] args) throws Exception {
     loadDotEnv();
@@ -51,29 +49,18 @@ public class AppEngineMcpApplication extends SpringBootServletInitializer {
       makeLoggingCompatibleWithStdio();
       StdioMcpServer.run();
     } else {
-      SpringApplication.run(AppEngineMcpApplication.class, args);
+      System.err.println("This application is intended to run as a Servlet or in Stdio mode.");
+      System.err.println("To start in Stdio mode, use the --stdio flag.");
+      System.exit(1);
     }
   }
 
-  @Bean
-  public HttpServletStreamableServerTransportProvider transportProvider() {
-    return HttpServletStreamableServerTransportProvider.builder()
-        .mcpEndpoint("/mcp")
-        .jsonMapper(McpJsonDefaults.getMapper())
-        .build();
-  }
-
-  @Bean
-  public ServletRegistrationBean<HttpServletStreamableServerTransportProvider> mcpServlet(
-      HttpServletStreamableServerTransportProvider transportProvider) {
-    return new ServletRegistrationBean<>(transportProvider, "/mcp/*");
-  }
-
-  @Bean
-  public McpSyncServer mcpSyncServer(
-      HttpServletStreamableServerTransportProvider transportProvider,
-      AppEngineMcpTools tools,
-      McpConfig mcpConfig) {
+  @Override
+  public void contextInitialized(ServletContextEvent sce) {
+    loadDotEnv();
+    
+    McpConfig mcpConfig = new McpConfig();
+    HttpServletStreamableServerTransportProvider transportProvider = mcpConfig.createTransportProvider();
 
     var builder = McpServer.sync(transportProvider)
         .serverInfo(Constants.SERVER_NAME, Constants.SERVER_VERSION)
@@ -81,15 +68,20 @@ public class AppEngineMcpApplication extends SpringBootServletInitializer {
             .tools(true)
             .build());
     
-    mcpConfig.getToolSpecifications(tools).forEach(builder::tools);
-    
-    return builder.build();
-  }
+    mcpConfig.getToolSpecifications().forEach(builder::tools);
+    McpSyncServer mcpSyncServer = builder.build();
 
-  @Override
-  protected SpringApplicationBuilder configure(SpringApplicationBuilder builder) {
-    loadDotEnv();
-    return builder.sources(AppEngineMcpApplication.class);
+    // Store in servlet context for the servlet to find (though the SDK handles registration via transportProvider)
+    sce.getServletContext().setAttribute("mcpSyncServer", mcpSyncServer);
+    sce.getServletContext().setAttribute("mcpTransportProvider", transportProvider);
+    
+    // Register the transport provider servlet manually if not in web.xml
+    var registration = sce.getServletContext().addServlet("mcpServlet", transportProvider);
+    if (registration != null) {
+        registration.addMapping("/mcp/*");
+        registration.setAsyncSupported(true);
+        registration.setLoadOnStartup(1);
+    }
   }
 
   private static void loadDotEnv() {
@@ -108,8 +100,8 @@ public class AppEngineMcpApplication extends SpringBootServletInitializer {
     if ("false".equalsIgnoreCase(gcpStdio)) return false;
     if (System.getenv("GOOGLE_CLOUD_PROJECT") != null) return false;
     try {
-      var url = new java.net.URL("http://metadata.google.internal/computeMetadata/v1/project/project-id");
-      var conn = (java.net.HttpURLConnection) url.openConnection();
+      var url = new URL("http://metadata.google.internal/computeMetadata/v1/project/project-id");
+      var conn = (HttpURLConnection) url.openConnection();
       conn.setConnectTimeout(500);
       conn.setReadTimeout(500);
       conn.setRequestProperty("Metadata-Flavor", "Google");

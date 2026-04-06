@@ -15,41 +15,53 @@ limitations under the License.
 */
 package com.google.cloud.appengine.mcp;
 
+import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
+import io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 import com.google.cloud.appengine.mcp.tools.AppEngineMcpTools;
 import java.util.List;
 import java.util.Map;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
- * Configuration class for MCP tools and server settings.
+ * Manager for MCP tools and server configuration, without Spring dependencies.
  */
-@Configuration
 public class McpConfig {
 
-  @Bean
-  public AppEngineMcpTools mcpTools() {
-    return new AppEngineMcpTools();
+  private final AppEngineMcpTools tools;
+
+  public McpConfig() {
+    this.tools = new AppEngineMcpTools();
   }
 
-  public List<McpServerFeatures.SyncToolSpecification> getToolSpecifications(AppEngineMcpTools tools) {
+  public AppEngineMcpTools getTools() {
+    return tools;
+  }
+
+  public HttpServletStreamableServerTransportProvider createTransportProvider() {
+    return HttpServletStreamableServerTransportProvider.builder()
+        .mcpEndpoint("/mcp")
+        .jsonMapper(McpJsonDefaults.getMapper())
+        .build();
+  }
+
+  public List<McpServerFeatures.SyncToolSpecification> getToolSpecifications() {
     return List.of(
-        listProjectsTool(tools),
-        createProjectTool(tools),
-        listServicesTool(tools),
-        getServiceTool(tools),
-        listVersionsTool(tools),
-        getVersionTool(tools),
-        getServiceLogTool(tools),
-        deployLocalFolderTool(tools),
-        deployFileContentsTool(tools)
+        listProjectsTool(),
+        createProjectTool(),
+        listServicesTool(),
+        getServiceTool(),
+        listVersionsTool(),
+        getVersionTool(),
+        getServiceLogTool(),
+        deployLocalFolderTool(),
+        deployFileContentsTool()
     );
   }
 
-  private McpServerFeatures.SyncToolSpecification listProjectsTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification listProjectsTool() {
     return McpServerFeatures.SyncToolSpecification.builder()
         .tool(McpSchema.Tool.builder()
             .name("list_projects")
@@ -66,7 +78,7 @@ public class McpConfig {
         .build();
   }
 
-  private McpServerFeatures.SyncToolSpecification createProjectTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification createProjectTool() {
     var schema = new McpSchema.JsonSchema("object", 
         Map.of("projectId", Map.of("type", "string", "description", "Optional GCP project ID.")),
         null, null, null, null);
@@ -86,7 +98,7 @@ public class McpConfig {
         .build();
   }
 
-  private McpServerFeatures.SyncToolSpecification listServicesTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification listServicesTool() {
     var schema = new McpSchema.JsonSchema("object", 
         Map.of("project", Map.of("type", "string", "description", "GCP project ID.")),
         List.of("project"), null, null, null);
@@ -106,7 +118,7 @@ public class McpConfig {
         .build();
   }
 
-  private McpServerFeatures.SyncToolSpecification getServiceTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification getServiceTool() {
     var schema = new McpSchema.JsonSchema("object", 
         Map.of(
             "project", Map.of("type", "string", "description", "GCP project ID."),
@@ -129,7 +141,7 @@ public class McpConfig {
         .build();
   }
 
-  private McpServerFeatures.SyncToolSpecification listVersionsTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification listVersionsTool() {
     var schema = new McpSchema.JsonSchema("object", 
         Map.of(
             "project", Map.of("type", "string", "description", "GCP project ID."),
@@ -152,7 +164,7 @@ public class McpConfig {
         .build();
   }
 
-  private McpServerFeatures.SyncToolSpecification getVersionTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification getVersionTool() {
     var schema = new McpSchema.JsonSchema("object", 
         Map.of(
             "project", Map.of("type", "string", "description", "GCP project ID."),
@@ -176,7 +188,7 @@ public class McpConfig {
         .build();
   }
 
-  private McpServerFeatures.SyncToolSpecification getServiceLogTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification getServiceLogTool() {
     var schema = new McpSchema.JsonSchema("object", 
         Map.of(
             "project", Map.of("type", "string", "description", "GCP project ID."),
@@ -199,7 +211,7 @@ public class McpConfig {
         .build();
   }
 
-  private McpServerFeatures.SyncToolSpecification deployLocalFolderTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification deployLocalFolderTool() {
     var schema = new McpSchema.JsonSchema("object", 
         Map.of(
             "project", Map.of("type", "string", "description", "GCP project ID."),
@@ -224,7 +236,7 @@ public class McpConfig {
         .build();
   }
 
-  private McpServerFeatures.SyncToolSpecification deployFileContentsTool(AppEngineMcpTools tools) {
+  private McpServerFeatures.SyncToolSpecification deployFileContentsTool() {
     var fileSchema = new McpSchema.JsonSchema("object", 
         Map.of(
             "filename", Map.of("type", "string"),
@@ -259,10 +271,8 @@ public class McpConfig {
 
   private String extractToken(McpSyncServerExchange exchange) {
     try {
-        // transportContext() returns McpTransportContext
         var context = exchange.transportContext();
         if (context != null) {
-            // McpTransportContext.get(String)
             Object headersObj = context.get("headers");
             if (headersObj instanceof Map<?, ?> headers) {
                 Object authObj = headers.get("Authorization");

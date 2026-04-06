@@ -1,7 +1,5 @@
-com/google/cloud/appengine/mcp/WebMvcConfig.class
 com/google/cloud/appengine/mcp/cloud/AppEngineApiService$ServiceInfo.class
 com/google/cloud/appengine/mcp/cloud/AppEngineApiService$VersionInfo.class
-com/google/cloud/appengine/mcp/middleware/OAuthInterceptor.class
 com/google/cloud/appengine/mcp/cloud/AppEngineApiService.class
 com/google/cloud/appengine/mcp/deployment/AppEngineDeployer$DeployConfig.class
 com/google/cloud/appengine/mcp/AppEngineMcpApplication.class
@@ -10,6 +8,7 @@ com/google/cloud/appengine/mcp/cloud/LoggingApiService.class
 com/google/cloud/appengine/mcp/deployment/AppEngineDeployer.class
 com/google/cloud/appengine/mcp/cloud/ProjectsApiService.class
 com/google/cloud/appengine/mcp/McpConfig.class
+com/google/cloud/appengine/mcp/middleware/OAuthFilter.class
 com/google/cloud/appengine/mcp/Constants.class
 com/google/cloud/appengine/mcp/tools/AppEngineMcpTools.class
 com/google/cloud/appengine/mcp/deployment/AppEngineDeployer$FileEntry.class
