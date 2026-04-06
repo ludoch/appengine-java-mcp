@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright 2025 Google LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<appengine-web-app xmlns="http://appengine.google.com/ns/1.0">
+
+  <!--
+    Java 25 standard environment runtime.
+    See: https://cloud.google.com/appengine/docs/standard/java-gen2/runtime
+  -->
+  <runtime>java25</runtime>
+
+  <!--
+    Enable legacy App Engine bundled APIs:
+      - com.google.appengine.api.datastore.*  (Cloud Datastore legacy)
+      - com.google.appengine.api.memcache.*   (Memcache — used here for response caching)
+      - com.google.appengine.api.taskqueue.*  (Task Queue — used here for async deploys)
+      - com.google.appengine.api.urlfetch.*   (URLFetch)
+    Requires appengine-api-1.0-sdk on the classpath.
+  -->
+  <app-engine-apis>true</app-engine-apis>
+
+  <!-- Allow concurrent requests (required for modern Java runtimes) -->
+  <threadsafe>true</threadsafe>
+
+  <!--
+    Default environment variables.
+    These can be overridden at deploy time via:
+      gcloud app deploy --set-env-vars KEY=VALUE
+    or in the App Engine console.
+  -->
+  <env-variables>
+    <!-- Set to "false" to force HTTP/SSE mode even when no metadata server is found -->
+    <env-var name="GCP_STDIO" value="false"/>
+    <!-- Default project / region / service – overridden per deployment -->
+    <!-- <env-var name="GOOGLE_CLOUD_PROJECT" value="my-project-id"/> -->
+    <!-- <env-var name="DEFAULT_SERVICE_NAME"  value="default"/>      -->
+    <!-- Skip IAM check (allUsers invoker) – set false to require auth  -->
+    <env-var name="SKIP_IAM_CHECK" value="true"/>
+    <!-- Optional OAuth configuration (leave empty to use ADC)          -->
+    <!-- <env-var name="OAUTH_ENABLED"               value="true"/>     -->
+    <!-- <env-var name="GOOGLE_OAUTH_CLIENT_ID"      value="..."/>      -->
+    <!-- <env-var name="GOOGLE_OAUTH_CLIENT_SECRET"  value="..."/>      -->
+    <!-- Memcache TTL in seconds for GCP API responses (0 = no cache)  -->
+    <env-var name="CACHE_TTL_SECONDS" value="120"/>
+  </env-variables>
+
+  <!--
+    Increase instance class for MCP server workloads.
+    F2 = 1.2 GHz, 512 MB RAM.  Adjust as needed.
+  -->
+  <instance-class>F2</instance-class>
+
+  <!--
+    Automatic scaling – MCP servers are typically low-traffic but need
+    fast cold start.  Keep a minimum of 0 idle instances to save cost.
+  -->
+  <automatic-scaling>
+    <min-idle-instances>0</min-idle-instances>
+    <max-idle-instances>2</max-idle-instances>
+    <min-pending-latency>30ms</min-pending-latency>
+    <max-pending-latency>automatic</max-pending-latency>
+    <max-concurrent-requests>50</max-concurrent-requests>
+  </automatic-scaling>
+
+</appengine-web-app>
