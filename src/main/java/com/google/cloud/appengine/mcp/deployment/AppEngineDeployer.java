@@ -16,6 +16,11 @@ limitations under the License.
 package com.google.cloud.appengine.mcp.deployment;
 
 import com.google.api.gax.core.FixedCredentialsProvider;
+import com.google.api.serviceusage.v1.EnableServiceRequest;
+import com.google.api.serviceusage.v1.GetServiceRequest;
+import com.google.api.serviceusage.v1.ServiceUsageClient;
+import com.google.api.serviceusage.v1.ServiceUsageSettings;
+import com.google.appengine.v1.CreateVersionRequest;
 import com.google.appengine.v1.Deployment;
 import com.google.appengine.v1.Version;
 import com.google.appengine.v1.VersionsClient;
@@ -26,13 +31,10 @@ import com.google.cloud.appengine.mcp.cloud.AppEngineApiService;
 import com.google.cloud.appengine.mcp.cloud.AuthService;
 import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Bucket;
 import com.google.cloud.storage.BucketInfo;
 import com.google.cloud.storage.Storage;
 import com.google.cloud.storage.StorageOptions;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -47,19 +49,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * App Engine deployment orchestrator, mirroring lib/deployment/deployer.js.
- *
- * <p>Deployment flow:
- * <ol>
- *   <li>Enable required GCP APIs
- *   <li>Ensure a Cloud Storage bucket exists for staging
- *   <li>Zip source files and upload to GCS
- *   <li>Create a new App Engine version via the Admin API
- *   <li>Wait for the operation to complete
- *   <li>Return the service URL
- * </ol>
- *
- * <p>Uses App Engine TaskQueue (legacy API) for long-running deployments when available.
+ * App Engine deployment orchestrator.
  */
 public final class AppEngineDeployer {
 
@@ -67,16 +57,6 @@ public final class AppEngineDeployer {
 
   private AppEngineDeployer() {}
 
-  // ---------------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Deploys a list of files or a folder path to App Engine.
-   *
-   * @param config Deployment configuration
-   * @return URL of the deployed service
-   */
   public static String deploy(DeployConfig config) throws IOException {
     validateConfig(config);
     progress(config, "Starting App Engine deployment for service '%s' in project '%s'..."
@@ -108,36 +88,33 @@ public final class AppEngineDeployer {
     String url = AppEngineApiService.buildServiceUrl(config.projectId(), config.serviceName());
     progress(config, "Deployment complete. Service URL: " + url + "  (version: " + versionId + ")");
 
-    // Record deployment in App Engine Datastore (legacy API) for history
     recordDeployment(config.projectId(), config.serviceName(), versionId, url);
 
     return url;
   }
 
-  // ---------------------------------------------------------------------------
-  // Enable APIs
-  // ---------------------------------------------------------------------------
-
   private static void ensureApisEnabled(
-      String projectId, List<String> apis, String accessToken, DeployConfig config)
-      throws IOException {
+      String projectId, List<String> apis, String accessToken, DeployConfig config) {
     progress(config, "Ensuring required APIs are enabled: " + String.join(", ", apis));
     try {
       GoogleCredentials creds = AuthService.getCredentials(accessToken);
-      var settings = com.google.cloud.serviceusage.v1.ServiceUsageSettings.newBuilder()
+      var settings = ServiceUsageSettings.newBuilder()
           .setCredentialsProvider(FixedCredentialsProvider.create(creds))
           .build();
-      try (com.google.cloud.serviceusage.v1.ServiceUsageClient client =
-               com.google.cloud.serviceusage.v1.ServiceUsageClient.create(settings)) {
+      try (var client = ServiceUsageClient.create(settings)) {
         for (String api : apis) {
           String resourceName = "projects/" + projectId + "/services/" + api;
           try {
-            com.google.api.serviceusage.v1.Service svc = client.getService(resourceName);
+            var getReq = GetServiceRequest.newBuilder()
+                .setName(resourceName)
+                .build();
+            var svc = client.getService(getReq);
             if (svc.getState() != com.google.api.serviceusage.v1.State.ENABLED) {
               progress(config, "Enabling API: " + api);
-              client.enableServiceAsync(
-                  com.google.cloud.serviceusage.v1.EnableServiceRequest.newBuilder()
-                      .setName(resourceName).build()).get();
+              var enableReq = EnableServiceRequest.newBuilder()
+                  .setName(resourceName)
+                  .build();
+              client.enableServiceAsync(enableReq).get();
             }
           } catch (Exception e) {
             log.warn("Could not verify/enable API {}: {}", api, e.getMessage());
@@ -148,10 +125,6 @@ public final class AppEngineDeployer {
       log.warn("API enablement check failed (continuing): {}", e.getMessage());
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // GCS bucket
-  // ---------------------------------------------------------------------------
 
   private static void ensureBucket(
       String projectId, String bucketName, String accessToken, DeployConfig config)
@@ -165,7 +138,7 @@ public final class AppEngineDeployer {
           .build()
           .getService();
 
-      Bucket bucket = storage.get(bucketName);
+      var bucket = storage.get(bucketName);
       if (bucket == null) {
         storage.create(BucketInfo.newBuilder(bucketName)
             .setLocation("US")
@@ -176,10 +149,6 @@ public final class AppEngineDeployer {
       throw new IOException("Failed to ensure staging bucket: " + e.getMessage(), e);
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // Source upload
-  // ---------------------------------------------------------------------------
 
   private static String uploadToGcs(
       String projectId, String bucketName, byte[] data, String accessToken, DeployConfig config)
@@ -208,10 +177,6 @@ public final class AppEngineDeployer {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Version creation
-  // ---------------------------------------------------------------------------
-
   private static String deployVersion(DeployConfig config, String gcsUri) throws IOException {
     String versionId = "v" + Instant.now().toEpochMilli();
 
@@ -227,7 +192,7 @@ public final class AppEngineDeployer {
             .setRuntime(config.runtime() != null ? config.runtime()
                 : DeploymentConstants.DEFAULT_RUNTIME)
             .setEnv(DeploymentConstants.DEFAULT_ENV)
-            .setServingStatus(Version.ServingStatus.SERVING)
+            .setServingStatus(com.google.appengine.v1.ServingStatus.SERVING)
             .setDeployment(Deployment.newBuilder()
                 .setZip(ZipInfo.newBuilder()
                     .setSourceUrl(gcsUri)
@@ -239,8 +204,13 @@ public final class AppEngineDeployer {
         String parent = "apps/" + config.projectId() + "/services/" + config.serviceName();
         progress(config, "Submitting version %s to %s…".formatted(versionId, parent));
 
-        var operation = client.createVersionAsync(parent, version);
-        Version deployed = operation.get(); // blocks until done (or throws on failure)
+        CreateVersionRequest request = CreateVersionRequest.newBuilder()
+            .setParent(parent)
+            .setVersion(version)
+            .build();
+
+        var operation = client.createVersionAsync(request);
+        Version deployed = operation.get();
         return deployed.getId().isEmpty() ? versionId : deployed.getId();
       }
     } catch (Exception e) {
@@ -248,16 +218,11 @@ public final class AppEngineDeployer {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Source preparation
-  // ---------------------------------------------------------------------------
-
   private static byte[] zipFiles(List<FileEntry> files, DeployConfig config) throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     try (ZipOutputStream zos = new ZipOutputStream(baos)) {
       for (FileEntry entry : files) {
         if (entry.path() != null) {
-          // File-system path
           Path p = Path.of(entry.path());
           if (Files.isDirectory(p)) {
             zipDirectory(p, p, zos, config);
@@ -265,7 +230,6 @@ public final class AppEngineDeployer {
             addZipEntry(zos, p.getFileName().toString(), Files.readAllBytes(p));
           }
         } else if (entry.filename() != null && entry.content() != null) {
-          // In-memory content
           addZipEntry(zos, entry.filename(), entry.content().getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
       }
@@ -293,10 +257,6 @@ public final class AppEngineDeployer {
     zos.closeEntry();
   }
 
-  // ---------------------------------------------------------------------------
-  // App Engine Datastore – deployment history (legacy API)
-  // ---------------------------------------------------------------------------
-
   private static void recordDeployment(
       String projectId, String serviceId, String versionId, String url) {
     try {
@@ -313,14 +273,9 @@ public final class AppEngineDeployer {
       ds.put(entity);
       log.debug("Deployment recorded in Datastore for {}/{}", projectId, serviceId);
     } catch (Exception e) {
-      // Not on App Engine or Datastore unavailable – silently skip
       log.debug("Datastore deployment recording skipped: {}", e.getMessage());
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // Validation & progress
-  // ---------------------------------------------------------------------------
 
   private static void validateConfig(DeployConfig config) throws IOException {
     if (config.projectId() == null || config.projectId().isBlank()) {
@@ -341,28 +296,15 @@ public final class AppEngineDeployer {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Value objects
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Represents a single file to deploy: either a filesystem path or in-memory content.
-   */
   public record FileEntry(String path, String filename, String content) {
-    /** Factory: local filesystem file or directory. */
     public static FileEntry ofPath(String path) {
       return new FileEntry(path, null, null);
     }
-
-    /** Factory: in-memory file with string content. */
     public static FileEntry ofContent(String filename, String content) {
       return new FileEntry(null, filename, content);
     }
   }
 
-  /**
-   * Deployment parameters, mirroring the config object passed to deploy() in deployer.js.
-   */
   public record DeployConfig(
       String projectId,
       String serviceName,

@@ -16,6 +16,10 @@ limitations under the License.
 package com.google.cloud.appengine.mcp.cloud;
 
 import com.google.api.gax.core.FixedCredentialsProvider;
+import com.google.appengine.v1.GetServiceRequest;
+import com.google.appengine.v1.GetVersionRequest;
+import com.google.appengine.v1.ListServicesRequest;
+import com.google.appengine.v1.ListVersionsRequest;
 import com.google.appengine.v1.Service;
 import com.google.appengine.v1.ServicesClient;
 import com.google.appengine.v1.ServicesSettings;
@@ -30,72 +34,48 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * App Engine Admin API operations, mirroring lib/cloud-api/run.js for App Engine services.
- *
- * <p>Uses the {@code google-cloud-appengine-admin} client library. Results are cached in App
- * Engine Memcache (via the legacy API) to reduce API quota usage.
+ * Service for interacting with the Google App Engine Admin API.
  */
 public final class AppEngineApiService {
 
   private static final Logger log = LoggerFactory.getLogger(AppEngineApiService.class);
-  private static final int CACHE_TTL_SECONDS;
-
-  static {
-    int ttl = 120;
-    try {
-      ttl = Integer.parseInt(System.getenv("CACHE_TTL_SECONDS"));
-    } catch (Exception ignored) {}
-    CACHE_TTL_SECONDS = ttl;
-  }
 
   private AppEngineApiService() {}
 
-  // ---------------------------------------------------------------------------
-  // Services
-  // ---------------------------------------------------------------------------
-
   /**
-   * Lists all App Engine services in the given project.
-   * Mirrors listServices() from run.js.
+   * Lists all services in the given project.
    */
   public static List<ServiceInfo> listServices(String projectId, String accessToken)
       throws IOException {
-    String cacheKey = "ae_services_" + projectId;
-    List<ServiceInfo> cached = getFromMemcache(cacheKey);
-    if (cached != null) {
-      log.debug("Returning service list from Memcache for project {}", projectId);
-      return cached;
-    }
-
-    log.debug("Listing App Engine services for project {}", projectId);
+    log.debug("Listing App Engine services for project: {}", projectId);
     GoogleCredentials creds = AuthService.getCredentials(accessToken);
     ServicesSettings settings = ServicesSettings.newBuilder()
         .setCredentialsProvider(FixedCredentialsProvider.create(creds))
         .build();
 
-    List<ServiceInfo> services = new ArrayList<>();
+    List<ServiceInfo> results = new ArrayList<>();
     try (ServicesClient client = ServicesClient.create(settings)) {
       String parent = "apps/" + projectId;
-      for (Service service : client.listServices(parent).iterateAll()) {
-        services.add(ServiceInfo.fromProto(service, projectId));
+      ListServicesRequest request = ListServicesRequest.newBuilder()
+          .setParent(parent)
+          .build();
+      for (Service service : client.listServices(request).iterateAll()) {
+        results.add(new ServiceInfo(
+            service.getId(),
+            buildServiceUrl(projectId, service.getId()),
+            extractTrafficSplit(service)
+        ));
       }
     }
-
-    putToMemcache(cacheKey, services, CACHE_TTL_SECONDS);
-    return services;
+    return results;
   }
 
   /**
-   * Gets details for a specific App Engine service.
-   * Mirrors getService() from run.js.
+   * Gets details for a single service.
    */
-  public static ServiceInfo getService(
-      String projectId, String serviceId, String accessToken) throws IOException {
-    String cacheKey = "ae_service_" + projectId + "_" + serviceId;
-    ServiceInfo cached = getFromMemcache(cacheKey);
-    if (cached != null) return cached;
-
-    log.debug("Getting App Engine service {}/{}", projectId, serviceId);
+  public static ServiceInfo getService(String projectId, String serviceId, String accessToken)
+      throws IOException {
+    log.debug("Getting App Engine service: {}/{}", projectId, serviceId);
     GoogleCredentials creds = AuthService.getCredentials(accessToken);
     ServicesSettings settings = ServicesSettings.newBuilder()
         .setCredentialsProvider(FixedCredentialsProvider.create(creds))
@@ -103,19 +83,20 @@ public final class AppEngineApiService {
 
     try (ServicesClient client = ServicesClient.create(settings)) {
       String name = "apps/" + projectId + "/services/" + serviceId;
-      Service service = client.getService(name);
-      ServiceInfo info = ServiceInfo.fromProto(service, projectId);
-      putToMemcache(cacheKey, info, CACHE_TTL_SECONDS);
-      return info;
+      GetServiceRequest request = GetServiceRequest.newBuilder()
+          .setName(name)
+          .build();
+      Service service = client.getService(request);
+      return new ServiceInfo(
+          service.getId(),
+          buildServiceUrl(projectId, service.getId()),
+          extractTrafficSplit(service)
+      );
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Versions
-  // ---------------------------------------------------------------------------
-
   /**
-   * Lists versions of an App Engine service.
+   * Lists all versions for a service.
    */
   public static List<VersionInfo> listVersions(
       String projectId, String serviceId, String accessToken) throws IOException {
@@ -125,23 +106,25 @@ public final class AppEngineApiService {
         .setCredentialsProvider(FixedCredentialsProvider.create(creds))
         .build();
 
-    List<VersionInfo> versions = new ArrayList<>();
+    List<VersionInfo> results = new ArrayList<>();
     try (VersionsClient client = VersionsClient.create(settings)) {
       String parent = "apps/" + projectId + "/services/" + serviceId;
-      for (Version v : client.listVersions(parent).iterateAll()) {
-        versions.add(VersionInfo.fromProto(v));
+      ListVersionsRequest request = ListVersionsRequest.newBuilder()
+          .setParent(parent)
+          .build();
+      for (Version v : client.listVersions(request).iterateAll()) {
+        results.add(mapVersion(v));
       }
     }
-    return versions;
+    return results;
   }
 
   /**
-   * Gets a specific version of an App Engine service.
+   * Gets details for a specific version.
    */
   public static VersionInfo getVersion(
-      String projectId, String serviceId, String versionId, String accessToken)
-      throws IOException {
-    log.debug("Getting version {}/{}/{}", projectId, serviceId, versionId);
+      String projectId, String serviceId, String versionId, String accessToken) throws IOException {
+    log.debug("Getting version {} for {}/{}", versionId, projectId, serviceId);
     GoogleCredentials creds = AuthService.getCredentials(accessToken);
     VersionsSettings settings = VersionsSettings.newBuilder()
         .setCredentialsProvider(FixedCredentialsProvider.create(creds))
@@ -149,13 +132,16 @@ public final class AppEngineApiService {
 
     try (VersionsClient client = VersionsClient.create(settings)) {
       String name = "apps/" + projectId + "/services/" + serviceId + "/versions/" + versionId;
-      Version v = client.getVersion(name);
-      return VersionInfo.fromProto(v);
+      GetVersionRequest request = GetVersionRequest.newBuilder()
+          .setName(name)
+          .build();
+      Version v = client.getVersion(request);
+      return mapVersion(v);
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Utility: service URL
+  // Helpers
   // ---------------------------------------------------------------------------
 
   public static String buildServiceUrl(String projectId, String serviceId) {
@@ -165,29 +151,26 @@ public final class AppEngineApiService {
     return "https://" + serviceId + "-dot-" + projectId + ".appspot.com";
   }
 
-  // ---------------------------------------------------------------------------
-  // Value objects
-  // ---------------------------------------------------------------------------
-
-  public record ServiceInfo(
-      String name,
-      String serviceId,
-      String projectId,
-      String url,
-      String trafficSplit) {
-
-    static ServiceInfo fromProto(Service s, String projectId) {
-      String serviceId = s.getName().substring(s.getName().lastIndexOf('/') + 1);
-      String url = buildServiceUrl(projectId, serviceId);
-      // Traffic split: format as "version->weight" pairs
-      var sb = new StringBuilder();
-      s.getSplit().getAllocationsMap().forEach((v, w) -> {
-        if (!sb.isEmpty()) sb.append(", ");
-        sb.append(v).append("->").append(String.format("%.0f%%", w * 100));
-      });
-      return new ServiceInfo(s.getName(), serviceId, projectId, url, sb.toString());
+  private static String extractTrafficSplit(Service service) {
+    if (service.hasSplit()) {
+      return service.getSplit().getAllocationsMap().toString();
     }
+    return "100% (default)";
   }
+
+  private static VersionInfo mapVersion(Version v) {
+    return new VersionInfo(
+        v.getId(),
+        v.getRuntime(),
+        v.getEnv(),
+        v.getServingStatus().name(),
+        v.getCreateTime() != null ? v.getCreateTime().toString() : "unknown",
+        v.getCreatedBy(),
+        v.getDiskUsageBytes()
+    );
+  }
+
+  public record ServiceInfo(String serviceId, String url, String trafficSplit) {}
 
   public record VersionInfo(
       String versionId,
@@ -196,45 +179,5 @@ public final class AppEngineApiService {
       String servingStatus,
       String createTime,
       String createdBy,
-      long diskUsageBytes) {
-
-    static VersionInfo fromProto(Version v) {
-      String versionId = v.getName().substring(v.getName().lastIndexOf('/') + 1);
-      String createTime = v.hasCreateTime() ? v.getCreateTime().toString() : "N/A";
-      return new VersionInfo(
-          versionId,
-          v.getRuntime(),
-          v.getEnv(),
-          v.getServingStatus().name(),
-          createTime,
-          v.getCreatedBy(),
-          v.getDiskUsageBytes());
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // App Engine Memcache helpers
-  // ---------------------------------------------------------------------------
-
-  @SuppressWarnings("unchecked")
-  private static <T> T getFromMemcache(String key) {
-    if (CACHE_TTL_SECONDS <= 0) return null;
-    try {
-      com.google.appengine.api.memcache.MemcacheService memcache =
-          com.google.appengine.api.memcache.MemcacheServiceFactory.getMemcacheService();
-      return (T) memcache.get(key);
-    } catch (Exception e) {
-      return null;
-    }
-  }
-
-  private static void putToMemcache(String key, Object value, int ttlSeconds) {
-    if (CACHE_TTL_SECONDS <= 0) return;
-    try {
-      com.google.appengine.api.memcache.MemcacheService memcache =
-          com.google.appengine.api.memcache.MemcacheServiceFactory.getMemcacheService();
-      memcache.put(key, value,
-          com.google.appengine.api.memcache.Expiration.byDeltaSeconds(ttlSeconds));
-    } catch (Exception ignored) {}
-  }
+      long diskUsageBytes) {}
 }

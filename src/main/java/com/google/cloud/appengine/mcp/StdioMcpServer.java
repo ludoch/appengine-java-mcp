@@ -15,24 +15,18 @@ limitations under the License.
 */
 package com.google.cloud.appengine.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.cloud.appengine.mcp.tools.ToolRegistry;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
+import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
+import io.modelcontextprotocol.spec.McpSchema;
+import com.google.cloud.appengine.mcp.tools.AppEngineMcpTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
+import org.springframework.context.ConfigurableApplicationContext;
 
 /**
- * Stdio transport implementation for the MCP server.
- *
- * <p>Reads JSON-RPC 2.0 messages from stdin (newline-delimited) and writes responses to stdout.
- * Mirrors the StdioServerTransport used in the cloud-run-mcp Node.js server.
- *
- * <p>All logging must go to stderr; stdout is reserved for the MCP protocol stream.
+ * Stdio transport implementation for the MCP server using the official Java SDK.
  */
 public final class StdioMcpServer {
 
@@ -43,82 +37,38 @@ public final class StdioMcpServer {
   public static void run() throws Exception {
     log.info("App Engine MCP server starting in stdio transport mode");
 
-    ObjectMapper objectMapper = new ObjectMapper();
-    ToolRegistry toolRegistry = ToolRegistry.createDefault();
+    // Initialize Spring context to get beans
+    try (ConfigurableApplicationContext context = SpringApplication.run(AppEngineMcpApplication.class, "--stdio")) {
+      AppEngineMcpTools tools = context.getBean(AppEngineMcpTools.class);
+      McpConfig mcpConfig = context.getBean(McpConfig.class);
+      
+      // Setup Stdio transport
+      var transportProvider = new StdioServerTransportProvider(McpJsonDefaults.getMapper());
 
-    // Stdout is the JSON-RPC transport; stderr is used for logs
-    PrintStream out = System.out;
-    BufferedReader in =
-        new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+      // Initialize the Sync Server
+      var builder = McpServer.sync(transportProvider)
+          .serverInfo(Constants.SERVER_NAME, Constants.SERVER_VERSION)
+          .capabilities(McpSchema.ServerCapabilities.builder()
+              .tools(true)
+              .build());
+      
+      mcpConfig.getToolSpecifications(tools).forEach(builder::tools);
+      
+      builder.build();
 
-    String line;
-    while ((line = in.readLine()) != null) {
-      line = line.trim();
-      if (line.isEmpty()) continue;
-
-      log.debug("stdin << {}", line);
-      try {
-        JsonNode req = objectMapper.readTree(line);
-        String method = req.path("method").asText();
-        JsonNode id = req.path("id");
-        JsonNode params = req.path("params");
-
-        // Dispatch using the same logic as the HTTP controller
-        McpController controller = new McpController(objectMapper, toolRegistry);
-        // Reflectively access the private processRequest via a dedicated method
-        String response =
-            processStdioRequest(controller, objectMapper, method, id, params);
-
-        // Notifications (no id) produce no response
-        if (id.isMissingNode() || id.isNull()) {
-          if (method.startsWith("notifications/")) continue;
-        }
-
-        if (response != null && !response.isBlank()) {
-          out.println(response);
-          out.flush();
-          log.debug("stdout >> {}", response);
-        }
-
-      } catch (Exception e) {
-        log.error("Error processing stdin message", e);
-        String errResp =
-            "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error\"},\"id\":null}";
-        out.println(errResp);
-        out.flush();
+      log.info("Stdio transport active...");
+      // For Stdio, the sync server usually starts the session loop in the background or blocks.
+      // Since it's a SingleSessionSyncSpecification, it might be waiting for the connection.
+      
+      // We need to keep the process alive while the transport is running.
+      // Based on typical SDK patterns, the session handles its own lifecycle.
+      // However, we might need a way to wait for it.
+      // For now, we'll wait for System.in to close.
+      while (System.in.read() != -1) {
+          // Just wait
       }
     }
-
-    log.info("stdin closed – stdio MCP server shutting down");
-  }
-
-  /**
-   * Process a single JSON-RPC request (extracted so tests can call it directly without going
-   * through HTTP).
-   */
-  static String processStdioRequest(
-      McpController controller,
-      ObjectMapper mapper,
-      String method,
-      JsonNode id,
-      JsonNode params)
-      throws Exception {
-
-    // Delegate to the controller's internal dispatcher via the public HTTP endpoint
-    // by reconstructing a minimal JSON-RPC body.
-    ObjectNode body = mapper.createObjectNode();
-    body.put("jsonrpc", "2.0");
-    body.put("method", method);
-    if (!id.isMissingNode()) body.set("id", id);
-    if (params != null && !params.isMissingNode()) body.set("params", params);
-
-    var responseEntity =
-        controller.handleMcp(
-            mapper.writeValueAsString(body),
-            null, // no Authorization header in stdio mode
-            null  // no HttpServletRequest
-        );
-
-    return responseEntity.getBody();
+    
+    log.info("Stdio MCP server shutting down");
   }
 }

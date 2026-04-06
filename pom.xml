@@ -42,7 +42,7 @@ limitations under the License.
 
     <appengine.plugin.version>2.7.0</appengine.plugin.version>
     <appengine.sdk.version>2.0.28</appengine.sdk.version>
-    <google.cloud.bom.version>26.50.0</google.cloud.bom.version>
+    <google.cloud.bom.version>26.53.0</google.cloud.bom.version>
   </properties>
 
   <dependencyManagement>
@@ -120,6 +120,7 @@ limitations under the License.
     <dependency>
       <groupId>com.google.cloud</groupId>
       <artifactId>google-cloud-service-usage</artifactId>
+      <version>2.53.0</version>
     </dependency>
     <dependency>
       <groupId>com.google.auth</groupId>
@@ -142,6 +143,13 @@ limitations under the License.
       <groupId>io.github.cdimascio</groupId>
       <artifactId>dotenv-java</artifactId>
       <version>3.0.0</version>
+    </dependency>
+
+    <!-- ===== Model Context Protocol (MCP) Java SDK ===== -->
+    <dependency>
+      <groupId>io.modelcontextprotocol.sdk</groupId>
+      <artifactId>mcp</artifactId>
+      <version>1.1.1</version>
     </dependency>
 
     <!-- ===== Testing ===== -->

@@ -18,79 +18,43 @@ package com.google.cloud.appengine.mcp.cloud;
 import com.google.auth.oauth2.AccessToken;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.auth.oauth2.OAuth2Credentials;
-import com.google.auth.oauth2.UserCredentials;
-import com.google.cloud.appengine.mcp.Constants;
 import java.io.IOException;
-import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Authentication helper, mirroring lib/cloud-api/auth.js.
- *
- * <p>Supports two modes:
- * <ol>
- *   <li>Application Default Credentials (ADC) – used when {@code accessToken} equals
- *       {@link Constants#GCLOUD_AUTH}.
- *   <li>OAuth2 access token passed from the MCP client's {@code Authorization} header.
- * </ol>
+ * Service for managing GCP authentication credentials.
  */
 public final class AuthService {
 
   private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
-  private static final List<String> SCOPES =
-      List.of(Constants.SCOPE_CLOUD_PLATFORM, Constants.SCOPE_EMAIL);
-
   private AuthService() {}
 
   /**
-   * Returns {@link GoogleCredentials} appropriate for the given access-token value.
-   *
-   * @param accessToken Either {@link Constants#GCLOUD_AUTH} (use ADC) or an OAuth2 Bearer token.
+   * Returns GoogleCredentials. If an access token is provided, uses it to create
+   * OAuth2Credentials. Otherwise, falls back to Application Default Credentials (ADC).
    */
   public static GoogleCredentials getCredentials(String accessToken) throws IOException {
-    if (accessToken == null || Constants.GCLOUD_AUTH.equals(accessToken)) {
-      return getApplicationDefaultCredentials();
+    if (accessToken != null && !accessToken.isBlank() && !"gcloud_auth".equals(accessToken)) {
+      log.debug("Using provided access token for credentials");
+      return buildOAuthCredentials(accessToken);
     }
-    return buildOAuthCredentials(accessToken);
-  }
 
-  /**
-   * Returns {@code true} when Application Default Credentials are configured and functional.
-   * Mirrors ensureGCPCredentials() in auth.js.
-   */
-  public static boolean ensureGCPCredentials() {
-    log.debug("Checking for Google Cloud Application Default Credentials…");
-    try {
-      GoogleCredentials creds = getApplicationDefaultCredentials();
-      creds.refreshIfExpired();
-      log.info("Application Default Credentials found and valid.");
-      return true;
-    } catch (IOException e) {
-      log.error(
-          "Google Cloud Application Default Credentials are not configured. "
-              + "Run: gcloud auth application-default login\n"
-              + "Original error: {}",
-          e.getMessage());
-      return false;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
-  private static GoogleCredentials getApplicationDefaultCredentials() throws IOException {
+    log.debug("Falling back to Application Default Credentials (ADC)");
     GoogleCredentials credentials = GoogleCredentials.getApplicationDefault();
+    
+    // Scopes are generally needed when using ADC to call GCP APIs
     if (credentials.createScopedRequired()) {
-      credentials = credentials.createScoped(SCOPES);
+      credentials = credentials.createScoped(
+          "https://www.googleapis.com/auth/cloud-platform"
+      );
     }
     return credentials;
   }
 
   private static GoogleCredentials buildOAuthCredentials(String token) {
     AccessToken accessToken = new AccessToken(token, null /* no expiry known */);
-    return OAuth2Credentials.create(accessToken);
+    return (GoogleCredentials) OAuth2Credentials.create(accessToken);
   }
 }

@@ -17,13 +17,13 @@ package com.google.cloud.appengine.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.cloud.appengine.mcp.middleware.OAuthInterceptor;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.lang.NonNull;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/** Spring MVC configuration: registers OAuth interceptor and shared beans. */
+/**
+ * Spring MVC configuration for registering interceptors.
+ */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
@@ -34,14 +34,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
   }
 
   @Override
-  public void addInterceptors(@NonNull InterceptorRegistry registry) {
-    registry
-        .addInterceptor(new OAuthInterceptor(objectMapper))
-        .addPathPatterns("/mcp", "/messages", "/sse");
-  }
-
-  @Bean
-  public com.google.cloud.appengine.mcp.tools.ToolRegistry toolRegistry() {
-    return com.google.cloud.appengine.mcp.tools.ToolRegistry.createDefault();
+  public void addInterceptors(InterceptorRegistry registry) {
+    // Intercept MCP requests to handle Bearer token auth if present
+    registry.addInterceptor(new OAuthInterceptor(objectMapper))
+        .addPathPatterns("/mcp", "/mcp/**");
   }
 }
